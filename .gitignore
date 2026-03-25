@@ -1,0 +1,4 @@
+leavemate.db
+*.db
+*.msi
+__pycache__/
