@@ -1,5 +1,5 @@
 # LeaveMate 🎯
-### Bunk Smart, Not Hard
+### Make every class count
 
 A full-stack web app for students to track attendance and plan their leaves strategically — always staying above the 75% minimum.
 
@@ -11,7 +11,7 @@ A full-stack web app for students to track attendance and plan their leaves stra
 |-------|------|
 | Frontend | HTML + CSS + Vanilla JS |
 | Backend | Python (Flask) |
-| Database | SQLite (auto-created) |
+| Database | SQLite |
 
 ---
 
@@ -35,27 +35,32 @@ Open `index.html` in your browser, OR visit **http://localhost:5000** (Flask ser
 
 ## Features
 
-- **Auth** — Register / Login with hashed passwords (SHA-256)
-- **Subjects** — Add subjects with color tags, subject codes, priority levels
-- **Attendance Tracking** — Mark present/absent per subject per day, instant count update
-- **Bunk Planner** — See exactly how many more classes you can skip per subject while staying ≥75%
+
+- **Authentication** — Secure login and registration with hashed passwords (SHA-256)
+- **Subjects Management** — Add and manage subjects with color tags and priority levels
+- **Attendance Tracking** — Mark attendance daily with automatic percentage calculation
+- **Leave Planner** — Calculate how many classes can be missed while staying above 75%
 - **Dashboard** — Visual bar chart of all subjects vs the 75% threshold line
-- **Timetable** — Weekly grid to plan your schedule
-- **Profile** — Editable name, roll number, semester
+- **Timetable** — Weekly grid to plan schedule
+- **Profile Management** — Edit personal and academic details
 
 ---
 
-## The 75% Math
+## Attendance Calculation (75% Rule)
 
-**Can bunk N more classes:**
-```
+The system uses a 75% attendance threshold to determine eligibility:
+
+**Maximum classes you can miss (if above 75%):**
+
 N = floor((attended - 0.75 × total) / 0.75)
-```
 
-**Need to attend M more (if below 75%):**
-```
+
+**Minimum classes you must attend (if below 75%):**
+
 M = ceil((0.75 × total - attended) / 0.25)
-```
+
+
+These formulas dynamically calculate safe leave limits and required attendan
 
 ---
 
