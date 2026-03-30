@@ -1233,11 +1233,11 @@ select:focus { border-color: var(--accent3); }
 
 <script>
 // ─────────────────── CONFIG ───────────────────────────────────────
-const API = 'http://localhost:5000/api';
-let currentUser = null;
-let subjects = [];
-let analytics = [];
+const BASE_URL = "https://leavemate-cw8b.onrender.com/api";
 
+let user = null;
+let subjects = [];
+let schedule = [];
 // ─────────────────── AUTH ─────────────────────────────────────────
 function switchAuthTab(tab) {
   document.querySelectorAll('.auth-tab').forEach((t,i) => {
