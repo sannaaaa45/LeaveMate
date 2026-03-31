@@ -1,20 +1,19 @@
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
-import sqlite3
+import psycopg2
+from psycopg2.extras import RealDictCursor
 import hashlib
-import json
 import os
-from datetime import datetime
 import math
+from datetime import datetime
 
 app = Flask(__name__, static_folder='.')
 CORS(app)
 
-DB_PATH = 'leavemate.db'
+DATABASE_URL = os.environ.get("DATABASE_URL", "postgresql://postgres:[YOUR-PASSWORD]@db.hjsdhqzbumkbhfyhzlfi.supabase.co:5432/postgres")
 
 def get_db():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
+    conn = psycopg2.connect(DATABASE_URL)
     return conn
 
 def init_db():
@@ -22,7 +21,7 @@ def init_db():
     c = conn.cursor()
     
     c.execute('''CREATE TABLE IF NOT EXISTS users (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id SERIAL PRIMARY KEY,
         name TEXT NOT NULL,
         email TEXT UNIQUE NOT NULL,
         password TEXT NOT NULL,
@@ -32,38 +31,33 @@ def init_db():
     )''')
     
     c.execute('''CREATE TABLE IF NOT EXISTS subjects (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id INTEGER NOT NULL,
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
         name TEXT NOT NULL,
         code TEXT,
         total_classes INTEGER DEFAULT 0,
         attended_classes INTEGER DEFAULT 0,
         priority INTEGER DEFAULT 2,
-        color TEXT DEFAULT '#00ff88',
-        FOREIGN KEY (user_id) REFERENCES users(id)
+        color TEXT DEFAULT '#00ff88'
     )''')
     
     c.execute('''CREATE TABLE IF NOT EXISTS attendance_log (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id INTEGER NOT NULL,
-        subject_id INTEGER NOT NULL,
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        subject_id INTEGER NOT NULL REFERENCES subjects(id) ON DELETE CASCADE,
         date TEXT NOT NULL,
         status TEXT NOT NULL,
         notes TEXT,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (user_id) REFERENCES users(id),
-        FOREIGN KEY (subject_id) REFERENCES subjects(id)
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )''')
     
     c.execute('''CREATE TABLE IF NOT EXISTS timetable (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id INTEGER NOT NULL,
-        subject_id INTEGER NOT NULL,
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        subject_id INTEGER NOT NULL REFERENCES subjects(id) ON DELETE CASCADE,
         day TEXT NOT NULL,
         start_time TEXT NOT NULL,
-        end_time TEXT NOT NULL,
-        FOREIGN KEY (user_id) REFERENCES users(id),
-        FOREIGN KEY (subject_id) REFERENCES subjects(id)
+        end_time TEXT NOT NULL
     )''')
     
     conn.commit()
@@ -78,16 +72,20 @@ def hash_password(password):
 def register():
     data = request.json
     conn = get_db()
+    c = conn.cursor(cursor_factory=RealDictCursor)
     try:
-        conn.execute(
-            'INSERT INTO users (name, email, password, roll_no, semester) VALUES (?,?,?,?,?)',
+        c.execute(
+            'INSERT INTO users (name, email, password, roll_no, semester) VALUES (%s,%s,%s,%s,%s) RETURNING id',
             (data['name'], data['email'], hash_password(data['password']),
              data.get('roll_no',''), data.get('semester',''))
         )
+        new_id = c.fetchone()['id']
         conn.commit()
-        user = conn.execute('SELECT * FROM users WHERE email=?', (data['email'],)).fetchone()
+        c.execute('SELECT * FROM users WHERE id=%s', (new_id,))
+        user = c.fetchone()
         return jsonify({'success': True, 'user': {'id': user['id'], 'name': user['name'], 'email': user['email']}})
-    except sqlite3.IntegrityError:
+    except psycopg2.errors.UniqueViolation:
+        conn.rollback()
         return jsonify({'success': False, 'error': 'Email already exists'}), 400
     finally:
         conn.close()
@@ -96,10 +94,12 @@ def register():
 def login():
     data = request.json
     conn = get_db()
-    user = conn.execute(
-        'SELECT * FROM users WHERE email=? AND password=?',
+    c = conn.cursor(cursor_factory=RealDictCursor)
+    c.execute(
+        'SELECT * FROM users WHERE email=%s AND password=%s',
         (data['email'], hash_password(data['password']))
-    ).fetchone()
+    )
+    user = c.fetchone()
     conn.close()
     if user:
         return jsonify({'success': True, 'user': {'id': user['id'], 'name': user['name'], 'email': user['email'], 'roll_no': user['roll_no'], 'semester': user['semester']}})
@@ -110,7 +110,9 @@ def login():
 @app.route('/api/subjects/<int:user_id>', methods=['GET'])
 def get_subjects(user_id):
     conn = get_db()
-    subjects = conn.execute('SELECT * FROM subjects WHERE user_id=?', (user_id,)).fetchall()
+    c = conn.cursor(cursor_factory=RealDictCursor)
+    c.execute('SELECT * FROM subjects WHERE user_id=%s', (user_id,))
+    subjects = c.fetchall()
     conn.close()
     return jsonify([dict(s) for s in subjects])
 
@@ -118,13 +120,16 @@ def get_subjects(user_id):
 def add_subject():
     data = request.json
     conn = get_db()
-    cursor = conn.execute(
-        'INSERT INTO subjects (user_id, name, code, total_classes, attended_classes, priority, color) VALUES (?,?,?,?,?,?,?)',
+    c = conn.cursor(cursor_factory=RealDictCursor)
+    c.execute(
+        'INSERT INTO subjects (user_id, name, code, total_classes, attended_classes, priority, color) VALUES (%s,%s,%s,%s,%s,%s,%s) RETURNING id',
         (data['user_id'], data['name'], data.get('code',''), data.get('total_classes',0),
          data.get('attended_classes',0), data.get('priority',2), data.get('color','#00ff88'))
     )
+    new_id = c.fetchone()['id']
     conn.commit()
-    subject = conn.execute('SELECT * FROM subjects WHERE id=?', (cursor.lastrowid,)).fetchone()
+    c.execute('SELECT * FROM subjects WHERE id=%s', (new_id,))
+    subject = c.fetchone()
     conn.close()
     return jsonify(dict(subject))
 
@@ -132,22 +137,23 @@ def add_subject():
 def update_subject(subject_id):
     data = request.json
     conn = get_db()
-    conn.execute(
-        'UPDATE subjects SET name=?, code=?, total_classes=?, attended_classes=?, priority=?, color=? WHERE id=?',
+    c = conn.cursor(cursor_factory=RealDictCursor)
+    c.execute(
+        'UPDATE subjects SET name=%s, code=%s, total_classes=%s, attended_classes=%s, priority=%s, color=%s WHERE id=%s',
         (data['name'], data.get('code',''), data['total_classes'], data['attended_classes'],
          data.get('priority',2), data.get('color','#00ff88'), subject_id)
     )
     conn.commit()
-    subject = conn.execute('SELECT * FROM subjects WHERE id=?', (subject_id,)).fetchone()
+    c.execute('SELECT * FROM subjects WHERE id=%s', (subject_id,))
+    subject = c.fetchone()
     conn.close()
     return jsonify(dict(subject))
 
 @app.route('/api/subjects/<int:subject_id>', methods=['DELETE'])
 def delete_subject(subject_id):
     conn = get_db()
-    conn.execute('DELETE FROM attendance_log WHERE subject_id=?', (subject_id,))
-    conn.execute('DELETE FROM timetable WHERE subject_id=?', (subject_id,))
-    conn.execute('DELETE FROM subjects WHERE id=?', (subject_id,))
+    c = conn.cursor()
+    c.execute('DELETE FROM subjects WHERE id=%s', (subject_id,))
     conn.commit()
     conn.close()
     return jsonify({'success': True})
@@ -157,13 +163,15 @@ def delete_subject(subject_id):
 @app.route('/api/attendance/<int:user_id>', methods=['GET'])
 def get_attendance(user_id):
     conn = get_db()
-    logs = conn.execute('''
+    c = conn.cursor(cursor_factory=RealDictCursor)
+    c.execute('''
         SELECT al.*, s.name as subject_name, s.color
         FROM attendance_log al
         JOIN subjects s ON al.subject_id = s.id
-        WHERE al.user_id=?
+        WHERE al.user_id=%s
         ORDER BY al.date DESC
-    ''', (user_id,)).fetchall()
+    ''', (user_id,))
+    logs = c.fetchall()
     conn.close()
     return jsonify([dict(l) for l in logs])
 
@@ -171,29 +179,32 @@ def get_attendance(user_id):
 def mark_attendance():
     data = request.json
     conn = get_db()
-    cursor = conn.execute(
-        'INSERT INTO attendance_log (user_id, subject_id, date, status, notes) VALUES (?,?,?,?,?)',
+    c = conn.cursor(cursor_factory=RealDictCursor)
+    c.execute(
+        'INSERT INTO attendance_log (user_id, subject_id, date, status, notes) VALUES (%s,%s,%s,%s,%s) RETURNING id',
         (data['user_id'], data['subject_id'], data['date'], data['status'], data.get('notes',''))
     )
-    # Update subject counts
+    log_id = c.fetchone()['id']
     if data['status'] == 'present':
-        conn.execute('UPDATE subjects SET total_classes=total_classes+1, attended_classes=attended_classes+1 WHERE id=?', (data['subject_id'],))
+        c.execute('UPDATE subjects SET total_classes=total_classes+1, attended_classes=attended_classes+1 WHERE id=%s', (data['subject_id'],))
     else:
-        conn.execute('UPDATE subjects SET total_classes=total_classes+1 WHERE id=?', (data['subject_id'],))
+        c.execute('UPDATE subjects SET total_classes=total_classes+1 WHERE id=%s', (data['subject_id'],))
     conn.commit()
     conn.close()
-    return jsonify({'success': True, 'id': cursor.lastrowid})
+    return jsonify({'success': True, 'id': log_id})
 
 @app.route('/api/attendance/<int:log_id>', methods=['DELETE'])
 def delete_attendance(log_id):
     conn = get_db()
-    log = conn.execute('SELECT * FROM attendance_log WHERE id=?', (log_id,)).fetchone()
+    c = conn.cursor(cursor_factory=RealDictCursor)
+    c.execute('SELECT * FROM attendance_log WHERE id=%s', (log_id,))
+    log = c.fetchone()
     if log:
         if log['status'] == 'present':
-            conn.execute('UPDATE subjects SET total_classes=total_classes-1, attended_classes=attended_classes-1 WHERE id=?', (log['subject_id'],))
+            c.execute('UPDATE subjects SET total_classes=total_classes-1, attended_classes=attended_classes-1 WHERE id=%s', (log['subject_id'],))
         else:
-            conn.execute('UPDATE subjects SET total_classes=total_classes-1 WHERE id=?', (log['subject_id'],))
-        conn.execute('DELETE FROM attendance_log WHERE id=?', (log_id,))
+            c.execute('UPDATE subjects SET total_classes=total_classes-1 WHERE id=%s', (log['subject_id'],))
+        c.execute('DELETE FROM attendance_log WHERE id=%s', (log_id,))
         conn.commit()
     conn.close()
     return jsonify({'success': True})
@@ -203,13 +214,15 @@ def delete_attendance(log_id):
 @app.route('/api/timetable/<int:user_id>', methods=['GET'])
 def get_timetable(user_id):
     conn = get_db()
-    slots = conn.execute('''
+    c = conn.cursor(cursor_factory=RealDictCursor)
+    c.execute('''
         SELECT t.*, s.name as subject_name, s.color, s.priority
         FROM timetable t
         JOIN subjects s ON t.subject_id = s.id
-        WHERE t.user_id=?
+        WHERE t.user_id=%s
         ORDER BY t.day, t.start_time
-    ''', (user_id,)).fetchall()
+    ''', (user_id,))
+    slots = c.fetchall()
     conn.close()
     return jsonify([dict(s) for s in slots])
 
@@ -217,23 +230,27 @@ def get_timetable(user_id):
 def add_timetable():
     data = request.json
     conn = get_db()
-    cursor = conn.execute(
-        'INSERT INTO timetable (user_id, subject_id, day, start_time, end_time) VALUES (?,?,?,?,?)',
+    c = conn.cursor(cursor_factory=RealDictCursor)
+    c.execute(
+        'INSERT INTO timetable (user_id, subject_id, day, start_time, end_time) VALUES (%s,%s,%s,%s,%s) RETURNING id',
         (data['user_id'], data['subject_id'], data['day'], data['start_time'], data['end_time'])
     )
+    slot_id = c.fetchone()['id']
     conn.commit()
-    slot = conn.execute('''
+    c.execute('''
         SELECT t.*, s.name as subject_name, s.color, s.priority
         FROM timetable t JOIN subjects s ON t.subject_id = s.id
-        WHERE t.id=?
-    ''', (cursor.lastrowid,)).fetchone()
+        WHERE t.id=%s
+    ''', (slot_id,))
+    slot = c.fetchone()
     conn.close()
     return jsonify(dict(slot))
 
 @app.route('/api/timetable/<int:slot_id>', methods=['DELETE'])
 def delete_timetable(slot_id):
     conn = get_db()
-    conn.execute('DELETE FROM timetable WHERE id=?', (slot_id,))
+    c = conn.cursor()
+    c.execute('DELETE FROM timetable WHERE id=%s', (slot_id,))
     conn.commit()
     conn.close()
     return jsonify({'success': True})
@@ -243,7 +260,9 @@ def delete_timetable(slot_id):
 @app.route('/api/analytics/<int:user_id>', methods=['GET'])
 def get_analytics(user_id):
     conn = get_db()
-    subjects = conn.execute('SELECT * FROM subjects WHERE user_id=?', (user_id,)).fetchall()
+    c = conn.cursor(cursor_factory=RealDictCursor)
+    c.execute('SELECT * FROM subjects WHERE user_id=%s', (user_id,))
+    subjects = c.fetchall()
     
     result = []
     for s in subjects:
@@ -251,18 +270,11 @@ def get_analytics(user_id):
         attended = s['attended_classes']
         pct = (attended / total * 100) if total > 0 else 0
         
-        # How many more can bunk while maintaining 75%
-        # attended / (total + x) = 0.75 => attended - 0.75*total = 0.75*x
-        # x = (attended - 0.75*total) / 0.75
         if total > 0:
             can_bunk = max(0, int((attended - 0.75 * total) / 0.75))
         else:
             can_bunk = 0
-        
-        # How many need to attend to reach 75%
-        # (attended + x) / (total + x) = 0.75
-        # attended + x = 0.75*total + 0.75*x
-        # 0.25*x = 0.75*total - attended
+            
         if pct < 75:
             need_attend = max(0, math.ceil((0.75 * total - attended) / 0.25))
         else:
@@ -291,12 +303,14 @@ def get_analytics(user_id):
 def update_user(user_id):
     data = request.json
     conn = get_db()
-    conn.execute(
-        'UPDATE users SET name=?, roll_no=?, semester=? WHERE id=?',
+    c = conn.cursor(cursor_factory=RealDictCursor)
+    c.execute(
+        'UPDATE users SET name=%s, roll_no=%s, semester=%s WHERE id=%s',
         (data['name'], data.get('roll_no',''), data.get('semester',''), user_id)
     )
     conn.commit()
-    user = conn.execute('SELECT * FROM users WHERE id=?', (user_id,)).fetchone()
+    c.execute('SELECT * FROM users WHERE id=%s', (user_id,))
+    user = c.fetchone()
     conn.close()
     return jsonify({'id': user['id'], 'name': user['name'], 'email': user['email'], 'roll_no': user['roll_no'], 'semester': user['semester']})
 
@@ -305,11 +319,14 @@ def serve_index():
     return send_from_directory('.', 'index.html')
 
 if __name__ != '__main__':
-    init_db()
+    try:
+        init_db()
+    except Exception as e:
+        print("Database initialization failed (perhaps wrong password):", e)
 
 if __name__ == '__main__':
     init_db()
-    print("🚀 LeaveMate backend running on http://:5000")
+    print("🚀 LeaveMate backend running on http://127.0.0.1:5000")
     import os
     port=int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
