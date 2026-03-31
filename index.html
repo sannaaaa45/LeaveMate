@@ -1233,7 +1233,10 @@ select:focus { border-color: var(--accent3); }
 
 <script>
 // ─────────────────── CONFIG ───────────────────────────────────────
-const API = "/api";
+let API = "/api";
+if (window.location.protocol === 'file:' || (window.location.hostname === '127.0.0.1' && window.location.port !== '5000') || (window.location.hostname === 'localhost' && window.location.port !== '5000')) {
+  API = "http://127.0.0.1:5000/api";
+}
 
 let currentUser = null;
 let subjects = [];
