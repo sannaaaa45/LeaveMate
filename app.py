@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 from datetime import datetime
+import math
 
 app = Flask(__name__, static_folder='.')
 CORS(app)
@@ -263,7 +264,7 @@ def get_analytics(user_id):
         # attended + x = 0.75*total + 0.75*x
         # 0.25*x = 0.75*total - attended
         if pct < 75:
-            need_attend = max(0, int((0.75 * total - attended) / 0.25) + 1)
+            need_attend = max(0, math.ceil((0.75 * total - attended) / 0.25))
         else:
             need_attend = 0
         
@@ -302,6 +303,9 @@ def update_user(user_id):
 @app.route('/')
 def serve_index():
     return send_from_directory('.', 'index.html')
+
+if __name__ != '__main__':
+    init_db()
 
 if __name__ == '__main__':
     init_db()
