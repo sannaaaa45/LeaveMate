@@ -1235,8 +1235,9 @@ select:focus { border-color: var(--accent3); }
 // ─────────────────── CONFIG ───────────────────────────────────────
 const API = "https://leavemate-qxfh.onrender.com/api";
 
-let user = null;
+let currentUser = null;
 let subjects = [];
+let analytics = [];
 let schedule = [];
 // ─────────────────── AUTH ─────────────────────────────────────────
 function switchAuthTab(tab) {
