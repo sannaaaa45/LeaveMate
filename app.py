@@ -10,7 +10,7 @@ from datetime import datetime
 app = Flask(__name__, static_folder='.')
 CORS(app)
 
-DATABASE_URL = os.environ.get("DATABASE_URL", "postgresql://postgres:Sanna@2006$&@db.hjsdhqzbumkbhfyhzlfi.supabase.co sannatirkey45@gmail.com:5432/postgres")
+DATABASE_URL = os.environ.get("DATABASE_URL", "postgresql://postgres:Sanna%402006%24%26@db.hjsdhqzbumkbhfyhzlfi.supabase.co:5432/postgres")
 
 def get_db():
     conn = psycopg2.connect(DATABASE_URL)
